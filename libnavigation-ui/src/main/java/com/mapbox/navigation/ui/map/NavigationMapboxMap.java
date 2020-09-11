@@ -59,6 +59,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import timber.log.Timber;
 
+import static com.mapbox.navigation.ui.internal.route.RouteConstants.DEFAULT_ROUTE_CLICK_PADDING;
 import static com.mapbox.navigation.ui.map.NavigationSymbolManager.MAPBOX_NAVIGATION_MARKER_NAME;
 
 /**
@@ -109,6 +110,7 @@ public class NavigationMapboxMap implements LifecycleObserver {
   private LocationFpsDelegate locationFpsDelegate;
   @Nullable
   private MapboxNavigation navigation;
+  private int routeClickPadding;
   private boolean vanishRouteLineEnabled;
 
   /**
@@ -169,15 +171,38 @@ public class NavigationMapboxMap implements LifecycleObserver {
    * @param useSpecializedLocationLayer determines if the location puck should use a specialized render layer.
    */
   public NavigationMapboxMap(@NonNull MapView mapView,
+                             @NonNull MapboxMap mapboxMap,
+                             @NonNull LifecycleOwner lifecycleOwner,
+                             @Nullable String routeBelowLayerId,
+                             boolean vanishRouteLineEnabled,
+                             boolean useSpecializedLocationLayer) {
+    this(mapView, mapboxMap, lifecycleOwner, routeBelowLayerId, vanishRouteLineEnabled,
+            useSpecializedLocationLayer, DEFAULT_ROUTE_CLICK_PADDING);
+  }
+
+  /**
+   * Constructor that can be used once {@link OnMapReadyCallback}
+   * has been called via {@link MapView#getMapAsync(OnMapReadyCallback)}.
+   *
+   * @param mapView for map size and Context
+   * @param mapboxMap for APIs to interact with the map
+   * @param lifecycleOwner provides lifecycle for component
+   * @param routeBelowLayerId optionally pass in a layer id to place the route line below
+   * @param vanishRouteLineEnabled determines if the route line should vanish behind the puck during navigation.
+   * @param useSpecializedLocationLayer determines if the location puck should use a specialized render layer.
+   */
+  public NavigationMapboxMap(@NonNull MapView mapView,
       @NonNull MapboxMap mapboxMap,
       @NonNull LifecycleOwner lifecycleOwner,
       @Nullable String routeBelowLayerId,
       boolean vanishRouteLineEnabled,
-      boolean useSpecializedLocationLayer) {
+      boolean useSpecializedLocationLayer,
+      int routeClickPadding) {
     this.mapView = mapView;
     this.mapboxMap = mapboxMap;
     this.vanishRouteLineEnabled = vanishRouteLineEnabled;
     this.lifecycleOwner = lifecycleOwner;
+    this.routeClickPadding = routeClickPadding;
     initializeMapPaddingAdjustor(mapView, mapboxMap);
     initializeNavigationSymbolManager(mapView, mapboxMap);
     initializeMapLayerInteractor(mapboxMap);
@@ -968,6 +993,22 @@ public class NavigationMapboxMap implements LifecycleObserver {
     locationComponent.setRenderMode(RenderMode.COMPASS);
   }
 
+  /**
+   * Updates the size of the bounding box used to determine which route line was clicked. Upon
+   * a map click an attempt will be made to find a route line intersecting the bounding box. This
+   * is used to select alternative route lines on the map.
+   *
+   * Passing large integers values through this method means that a user doesn't
+   * have to be very accurate with tapping on an actual route line because the invisible
+   * box is large and thus, there's a good chance that a portion of a route line will run
+   * through the query box's area. A smaller rectangle will decrease the chances.
+   */
+  public void updateClickDistancePadding(int newClickDistancePadding) {
+    if (mapRoute != null) {
+      mapRoute.updateClickDistancePadding(newClickDistancePadding);
+    }
+  }
+
   private void initializeMapPaddingAdjustor(@NonNull MapView mapView, MapboxMap mapboxMap) {
     mapPaddingAdjustor = new MapPaddingAdjustor(mapView, mapboxMap);
   }
@@ -993,6 +1034,7 @@ public class NavigationMapboxMap implements LifecycleObserver {
     mapRoute = new NavigationMapRoute.Builder(mapView, map, lifecycleOwner)
         .withStyle(routeStyleRes)
         .withBelowLayer(routeBelowLayerId)
+        .withCustomRouteClickPadding(routeClickPadding)
         .withVanishRouteLineEnabled(vanishRouteLineEnabled)
         .build();
   }

@@ -1,6 +1,7 @@
 package com.mapbox.navigation.ui.route
 
 import android.content.Context
+import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import android.util.SparseArray
 import androidx.annotation.AnyRes
@@ -16,7 +17,9 @@ import com.mapbox.geojson.FeatureCollection
 import com.mapbox.geojson.LineString
 import com.mapbox.geojson.Point
 import com.mapbox.geojson.utils.PolylineUtils
+import com.mapbox.mapboxsdk.geometry.LatLng
 import com.mapbox.mapboxsdk.location.LocationComponentConstants
+import com.mapbox.mapboxsdk.maps.MapboxMap
 import com.mapbox.mapboxsdk.maps.Style
 import com.mapbox.mapboxsdk.style.expressions.Expression
 import com.mapbox.mapboxsdk.style.layers.Layer
@@ -31,12 +34,14 @@ import com.mapbox.navigation.base.trip.model.RouteProgress
 import com.mapbox.navigation.ui.R
 import com.mapbox.navigation.ui.internal.route.MapRouteSourceProvider
 import com.mapbox.navigation.ui.internal.route.RouteConstants
+import com.mapbox.navigation.ui.internal.route.RouteConstants.ALTERNATIVE_ROUTE_CASING_LAYER_ID
 import com.mapbox.navigation.ui.internal.route.RouteConstants.ALTERNATIVE_ROUTE_LAYER_ID
 import com.mapbox.navigation.ui.internal.route.RouteConstants.ALTERNATIVE_ROUTE_SOURCE_ID
 import com.mapbox.navigation.ui.internal.route.RouteConstants.HEAVY_CONGESTION_VALUE
 import com.mapbox.navigation.ui.internal.route.RouteConstants.MAX_ELAPSED_SINCE_INDEX_UPDATE_NANO
 import com.mapbox.navigation.ui.internal.route.RouteConstants.MINIMUM_ROUTE_LINE_OFFSET
 import com.mapbox.navigation.ui.internal.route.RouteConstants.MODERATE_CONGESTION_VALUE
+import com.mapbox.navigation.ui.internal.route.RouteConstants.PRIMARY_ROUTE_CASING_LAYER_ID
 import com.mapbox.navigation.ui.internal.route.RouteConstants.PRIMARY_ROUTE_LAYER_ID
 import com.mapbox.navigation.ui.internal.route.RouteConstants.PRIMARY_ROUTE_SOURCE_ID
 import com.mapbox.navigation.ui.internal.route.RouteConstants.PRIMARY_ROUTE_TRAFFIC_LAYER_ID
@@ -68,6 +73,7 @@ import timber.log.Timber
 import kotlin.math.ln
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlin.random.Random
 
 /**
  * Responsible for the appearance of the route lines on the map. This class applies styling
@@ -688,6 +694,65 @@ internal class MapRouteLine(
         return routeFeatureData.firstOrNull {
             it.route == route
         }?.lineString ?: LineString.fromPolyline(route.geometry()!!, Constants.PRECISION_6)
+    }
+
+    /**
+     * The map will be queried for a route line feature at the target point or a bounding box
+     * centered at the target point with a padding value determining the box's size. If a route
+     * feature is found the index of that route in this class's route collection is returned. The
+     * primary route is given precedence if more than one route is found.
+     *
+     * @param target a target latitude/longitude serving as the search point
+     * @param mapboxMap a reference to the MapboxMap that will be queried
+     * @param padding a sizing value added to all sides of the target point  for creating a bounding
+     * box to search in.
+     *
+     * @return the index of the route in this class's route collection or -1 if no routes found.
+     */
+    fun findClosestRoute(
+        target: LatLng,
+        mapboxMap: MapboxMap,
+        padding: Int
+    ): Int {
+        val mapClickPointF = mapboxMap.projection.toScreenLocation(target)
+        val leftFloat = (mapClickPointF.x - padding)
+        val rightFloat = (mapClickPointF.x + padding)
+        val topFloat = (mapClickPointF.y - padding)
+        val bottomFloat = (mapClickPointF.y + padding)
+        val clickRectF = RectF(leftFloat, topFloat, rightFloat, bottomFloat)
+
+        val primaryFeaturesOnPoint = mapboxMap.queryRenderedFeatures(
+            mapClickPointF,
+            PRIMARY_ROUTE_LAYER_ID,
+            PRIMARY_ROUTE_CASING_LAYER_ID
+        )
+        val primaryFeaturesInRect = mapboxMap.queryRenderedFeatures(
+            clickRectF,
+            PRIMARY_ROUTE_LAYER_ID,
+            PRIMARY_ROUTE_CASING_LAYER_ID
+        )
+        val alternateFeaturesOnPoint = mapboxMap.queryRenderedFeatures(
+            mapClickPointF,
+            ALTERNATIVE_ROUTE_LAYER_ID,
+            ALTERNATIVE_ROUTE_CASING_LAYER_ID
+        )
+        val alternateFeaturesInRect = mapboxMap.queryRenderedFeatures(
+            clickRectF,
+            ALTERNATIVE_ROUTE_LAYER_ID,
+            ALTERNATIVE_ROUTE_CASING_LAYER_ID
+        )
+
+        val foundFeatures = listOf(
+            primaryFeaturesOnPoint,
+            primaryFeaturesInRect,
+            alternateFeaturesOnPoint,
+            alternateFeaturesInRect
+        ).flatten().distinct()
+
+        return routeFeatureData.indexOfFirst {
+            it.featureCollection.features()?.get(0)
+                ?.id() ?: 0 == foundFeatures.firstOrNull()?.id()
+        }
     }
 
     private fun getIdentifiableRouteFeatureDataProvider(directionsRoutes: List<IdentifiableRoute>):
@@ -1320,9 +1385,21 @@ internal class MapRouteLine(
                 )
 
                 val routeFeature = when (identifier) {
-                    null -> Feature.fromGeometry(routeGeometry)
-                    else -> Feature.fromGeometry(routeGeometry).also {
-                        it.addBooleanProperty(identifier, true)
+                    null -> {
+                        Feature.fromGeometry(
+                            routeGeometry,
+                            null,
+                            Random.nextInt().toString()
+                        )
+                    }
+                    else -> {
+                        Feature.fromGeometry(
+                            routeGeometry,
+                            null,
+                            Random.nextInt().toString()
+                        ).also {
+                            it.addBooleanProperty(identifier, true)
+                        }
                     }
                 }
 

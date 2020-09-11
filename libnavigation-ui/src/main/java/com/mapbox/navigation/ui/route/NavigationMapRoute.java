@@ -13,6 +13,7 @@ import androidx.lifecycle.LifecycleOwner;
 import androidx.lifecycle.OnLifecycleEvent;
 
 import com.mapbox.api.directions.v5.models.DirectionsRoute;
+import com.mapbox.mapboxsdk.geometry.LatLng;
 import com.mapbox.geojson.Point;
 import com.mapbox.mapboxsdk.location.OnIndicatorPositionChangedListener;
 import com.mapbox.navigation.core.trip.session.RouteProgressObserver;
@@ -32,6 +33,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import static com.mapbox.navigation.ui.internal.route.RouteConstants.DEFAULT_ROUTE_CLICK_PADDING;
 import static com.mapbox.navigation.ui.internal.route.RouteConstants.LAYER_ABOVE_UPCOMING_MANEUVER_ARROW;
 import static com.mapbox.navigation.ui.route.MapboxRouteLayerProviderFactory.getLayerProvider;
 
@@ -61,8 +63,6 @@ public class NavigationMapRoute implements LifecycleObserver {
   @NonNull
   private final LifecycleOwner lifecycleOwner;
   @Nullable
-  private MapRouteClickListener mapRouteClickListener;
-  @Nullable
   private MapRouteProgressChangeListener mapRouteProgressChangeListener;
   private boolean isMapClickListenerAdded = false;
   private MapView.OnDidFinishLoadingStyleListener didFinishLoadingStyleListener;
@@ -77,6 +77,9 @@ public class NavigationMapRoute implements LifecycleObserver {
   @Nullable
   private MapRouteLineInitializedCallback routeLineInitializedCallback;
   private List<RouteStyleDescriptor> routeStyleDescriptors;
+  private int routeClickPadding = DEFAULT_ROUTE_CLICK_PADDING;
+  @Nullable
+  private OnRouteSelectionChangeListener onRouteSelectionChangeListener;
 
   /**
    * Construct an instance of {@link NavigationMapRoute}.
@@ -100,7 +103,8 @@ public class NavigationMapRoute implements LifecycleObserver {
       boolean vanishRouteLineEnabled,
       @Nullable MapRouteLineInitializedCallback routeLineInitializedCallback,
       @Nullable List<RouteStyleDescriptor> routeStyleDescriptors,
-      long vanishingRouteLineUpdateIntervalNano) {
+      long vanishingRouteLineUpdateIntervalNano,
+      int routeClickPadding) {
     this.routeStyleDescriptors = routeStyleDescriptors;
     this.vanishRouteLineEnabled = vanishRouteLineEnabled;
     this.vanishingRouteLineUpdateIntervalNano = vanishingRouteLineUpdateIntervalNano;
@@ -118,7 +122,7 @@ public class NavigationMapRoute implements LifecycleObserver {
             routeLineInitializedCallback
     );
     this.routeArrow = new MapRouteArrow(mapView, mapboxMap, styleRes, LAYER_ABOVE_UPCOMING_MANEUVER_ARROW);
-    this.mapRouteClickListener = new MapRouteClickListener(this.routeLine);
+    this.routeClickPadding = routeClickPadding;
     this.mapRouteProgressChangeListener = buildMapRouteProgressChangeListener();
     this.routeLineInitializedCallback = routeLineInitializedCallback;
     this.lifecycleOwner = lifecycleOwner;
@@ -132,7 +136,6 @@ public class NavigationMapRoute implements LifecycleObserver {
       @NonNull LifecycleOwner lifecycleOwner,
       @StyleRes int styleRes,
       @Nullable String belowLayer,
-      MapRouteClickListener mapClickListener,
       MapView.OnDidFinishLoadingStyleListener didFinishLoadingStyleListener,
       MapRouteProgressChangeListener progressChangeListener) {
     this.navigation = navigation;
@@ -141,7 +144,6 @@ public class NavigationMapRoute implements LifecycleObserver {
     this.lifecycleOwner = lifecycleOwner;
     this.styleRes = styleRes;
     this.belowLayer = belowLayer;
-    this.mapRouteClickListener = mapClickListener;
     this.didFinishLoadingStyleListener = didFinishLoadingStyleListener;
     this.mapRouteProgressChangeListener = progressChangeListener;
     addListeners();
@@ -153,7 +155,6 @@ public class NavigationMapRoute implements LifecycleObserver {
       @NonNull LifecycleOwner lifecycleOwner,
       @StyleRes int styleRes,
       @Nullable String belowLayer,
-      MapRouteClickListener mapClickListener,
       MapView.OnDidFinishLoadingStyleListener didFinishLoadingStyleListener,
       MapRouteProgressChangeListener progressChangeListener,
       MapRouteLine routeLine,
@@ -164,7 +165,6 @@ public class NavigationMapRoute implements LifecycleObserver {
     this.lifecycleOwner = lifecycleOwner;
     this.styleRes = styleRes;
     this.belowLayer = belowLayer;
-    this.mapRouteClickListener = mapClickListener;
     this.didFinishLoadingStyleListener = didFinishLoadingStyleListener;
     this.mapRouteProgressChangeListener = progressChangeListener;
     this.routeLine = routeLine;
@@ -257,7 +257,7 @@ public class NavigationMapRoute implements LifecycleObserver {
   public void setOnRouteSelectionChangeListener(
       @Nullable OnRouteSelectionChangeListener onRouteSelectionChangeListener
   ) {
-    mapRouteClickListener.setOnRouteSelectionChangeListener(onRouteSelectionChangeListener);
+    this.onRouteSelectionChangeListener = onRouteSelectionChangeListener;
   }
 
   /**
@@ -269,7 +269,6 @@ public class NavigationMapRoute implements LifecycleObserver {
    * else false
    */
   public void showAlternativeRoutes(boolean alternativesVisible) {
-    mapRouteClickListener.updateAlternativesVisible(alternativesVisible);
     routeLine.toggleAlternativeVisibilityWith(alternativesVisible);
   }
 
@@ -403,7 +402,7 @@ public class NavigationMapRoute implements LifecycleObserver {
 
   private void addListeners() {
     if (!isMapClickListenerAdded) {
-      mapboxMap.addOnMapClickListener(mapRouteClickListener);
+      mapboxMap.addOnMapClickListener(mapClickListener);
       isMapClickListenerAdded = true;
     }
     if (navigation != null) {
@@ -421,7 +420,7 @@ public class NavigationMapRoute implements LifecycleObserver {
 
   private void removeListeners() {
     if (isMapClickListenerAdded) {
-      mapboxMap.removeOnMapClickListener(mapRouteClickListener);
+      mapboxMap.removeOnMapClickListener(mapClickListener);
       isMapClickListenerAdded = false;
     }
     if (navigation != null) {
@@ -464,11 +463,6 @@ public class NavigationMapRoute implements LifecycleObserver {
         vanishingPointOffset,
         routeLineInitializedCallback
     );
-    mapboxMap.removeOnMapClickListener(mapRouteClickListener);
-    OnRouteSelectionChangeListener listener = mapRouteClickListener.getOnRouteSelectionChangeListener();
-    mapRouteClickListener = new MapRouteClickListener(routeLine);
-    mapRouteClickListener.setOnRouteSelectionChangeListener(listener);
-    mapboxMap.addOnMapClickListener(mapRouteClickListener);
   }
 
   private void updateProgressChangeListener() {
@@ -481,10 +475,41 @@ public class NavigationMapRoute implements LifecycleObserver {
     }
   }
 
+  /**
+   * Updates the size of the bounding box used to determine which route line was clicked. Upon
+   * a map click an attempt will be made to find a route line intersecting the bounding box. This
+   * is used to select alternative route lines on the map.
+   *
+   * Passing large integers values through this method means that a user doesn't
+   * have to be very accurate with tapping on an actual route line because the invisible
+   * box is large and thus, there's a good chance that a portion of a route line will run
+   * through the query box's area. A smaller rectangle will decrease the chances.
+   */
+  public void updateClickDistancePadding(int newRouteClickRectFPadding) {
+    routeClickPadding = newRouteClickRectFPadding;
+  }
+
   @Nullable
   private MapRouteProgressChangeListener buildMapRouteProgressChangeListener() {
     return new MapRouteProgressChangeListener(this.routeLine, routeArrow);
   }
+
+  protected final MapboxMap.OnMapClickListener mapClickListener = new MapboxMap.OnMapClickListener() {
+    @Override
+    public boolean onMapClick(final @NonNull LatLng point) {
+      if (routeLine.retrieveVisibility() && routeLine.retrieveAlternativesVisible()) {
+        final int index = routeLine.findClosestRoute(point, mapboxMap, routeClickPadding);
+        if (index >= 0) {
+          final DirectionsRoute selectedRoute = routeLine.retrieveDirectionsRoutes().get(index);
+          routeLine.updatePrimaryRouteIndex(selectedRoute);
+          if (onRouteSelectionChangeListener != null) {
+            onRouteSelectionChangeListener.onNewPrimaryRouteSelected(selectedRoute);
+          }
+        }
+      }
+      return false;
+    }
+  };
 
   /**
    * The Builder of {@link NavigationMapRoute}.
@@ -500,6 +525,7 @@ public class NavigationMapRoute implements LifecycleObserver {
     @Nullable private MapRouteLineInitializedCallback routeLineInitializedCallback;
     @Nullable private List<RouteStyleDescriptor> routeStyleDescriptors;
     private long vanishingRouteLineUpdateIntervalNano = 62_500_000;
+    @Nullable private int routeClickPadding;
 
     /**
      * Instantiates a new Builder.
@@ -586,6 +612,24 @@ public class NavigationMapRoute implements LifecycleObserver {
     }
 
     /**
+     * Indicates the size of the bounding box used to determine which route line was clicked. Upon
+     * a map click an attempt will be made to find a route line intersecting the bounding box. This
+     * is used to select alternative route lines on the map.
+     *
+     * Passing a large integers values through this method means that a user doesn't
+     * have to be very accurate with tapping on an actual route line because the invisible
+     * box is large and thus, the chances that a portion of a route line running through the
+     * box's area is high. A smaller rectangle will decrease the chances.
+     *
+     * @return the builder
+     */
+    @NonNull
+    public Builder withCustomRouteClickPadding(int newRouteClickPadding) {
+      this.routeClickPadding = newRouteClickPadding;
+      return this;
+    }
+
+    /**
      * Indicate that the route line layer has been added to the current style
      *
      * @return the builder
@@ -613,7 +657,8 @@ public class NavigationMapRoute implements LifecycleObserver {
           vanishRouteLineEnabled,
           routeLineInitializedCallback,
           routeStyleDescriptors,
-          vanishingRouteLineUpdateIntervalNano
+          vanishingRouteLineUpdateIntervalNano,
+          routeClickPadding
       );
     }
   }
