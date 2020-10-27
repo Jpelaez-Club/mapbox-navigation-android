@@ -306,7 +306,7 @@ class MapboxNavigationTest {
     fun onDestroyCallsNativeNavigatorReset() {
         mapboxNavigation.onDestroy()
 
-        verify(exactly = 1) { navigator.create(any(), any(), any()) }
+        verify(exactly = 1) { navigator.reset() }
     }
 
     @Test
